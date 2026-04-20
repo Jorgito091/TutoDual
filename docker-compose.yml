@@ -1,0 +1,94 @@
+version: "3.9"
+
+services:
+  # ─── Databases ───────────────────────────────────────────────
+  core_db:
+    image: postgres:14-alpine
+    container_name: core_db
+    environment:
+      POSTGRES_USER: core_user
+      POSTGRES_PASSWORD: core_pass
+      POSTGRES_DB: core_db
+    volumes:
+      - core_db_data:/var/lib/postgresql/data
+      - ./core/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U core_user -d core_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5432:5432"
+
+  dual_db:
+    image: postgres:14-alpine
+    container_name: dual_db
+    environment:
+      POSTGRES_USER: dual_user
+      POSTGRES_PASSWORD: dual_pass
+      POSTGRES_DB: dual_db
+    volumes:
+      - dual_db_data:/var/lib/postgresql/data
+      - ./dual/db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dual_user -d dual_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    ports:
+      - "5433:5432"
+
+  # ─── Backend Services ─────────────────────────────────────────
+  core:
+    build:
+      context: ./core
+    container_name: core_service
+    environment:
+      DATABASE_URL: postgresql://core_user:core_pass@core_db:5432/core_db
+      SECRET_KEY: changeme-super-secret-key-for-jwt
+      ALGORITHM: HS256
+      ACCESS_TOKEN_EXPIRE_MINUTES: "60"
+    depends_on:
+      core_db:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./core/app:/app/app
+
+  dual:
+    build:
+      context: ./dual
+    container_name: dual_service
+    environment:
+      DATABASE_URL: postgresql://dual_user:dual_pass@dual_db:5432/dual_db
+      CORE_API_URL: http://core:8000
+      SECRET_KEY: changeme-super-secret-key-for-jwt
+      ALGORITHM: HS256
+    depends_on:
+      dual_db:
+        condition: service_healthy
+      core:
+        condition: service_started
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./dual/app:/app/app
+
+  # ─── Frontend ─────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+    container_name: frontend
+    environment:
+      VITE_CORE_API_URL: http://localhost:8000
+      VITE_DUAL_API_URL: http://localhost:8001
+    depends_on:
+      - core
+      - dual
+    ports:
+      - "5173:80"
+
+volumes:
+  core_db_data:
+  dual_db_data:
